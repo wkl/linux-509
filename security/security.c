@@ -38,7 +38,7 @@ static struct security_operations default_security_ops = {
 	.name	= "default",
 };
 
-static inline int __init verify(struct security_operations *ops)
+static inline int verify(struct security_operations *ops)
 {
 	/* verify the security_operations structure exists */
 	if (!ops)
@@ -77,6 +77,7 @@ void reset_security_ops(void)
 {
 	security_ops = &default_security_ops;
 }
+EXPORT_SYMBOL(reset_security_ops);
 
 /* Save user chosen LSM */
 static int __init choose_lsm(char *str)
@@ -117,7 +118,7 @@ int __init security_module_enable(struct security_operations *ops)
  * If there is already a security module registered with the kernel,
  * an error will be returned.  Otherwise %0 is returned on success.
  */
-int __init register_security(struct security_operations *ops)
+int register_security(struct security_operations *ops)
 {
 	if (verify(ops)) {
 		printk(KERN_DEBUG "%s could not verify "
@@ -132,6 +133,7 @@ int __init register_security(struct security_operations *ops)
 
 	return 0;
 }
+EXPORT_SYMBOL(register_security);
 
 /* Security operations */
 

@@ -1725,7 +1725,7 @@ struct security_operations {
 extern int security_init(void);
 extern int security_module_enable(struct security_operations *ops);
 extern int register_security(struct security_operations *ops);
-extern void __init security_fixup_ops(struct security_operations *ops);
+extern void security_fixup_ops(struct security_operations *ops);
 
 
 /* Security operations */
