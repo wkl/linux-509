@@ -54,6 +54,7 @@ int role_add_or_modify(int rid, int permission)
 		role->permission = permission;
 		list_add_tail(&role->list, &role_list);
 	}
+	INFO("role[%d] created or modified", rid);
 #ifdef XDEBUG
 	dump_role_list(&role_list, 1);
 #endif
@@ -145,7 +146,7 @@ static ssize_t role_store(struct kobject *kobj, struct kobj_attribute *attr,
 	int n;
 	int err = 0;
 
-	INFO("%.*s", (int)count, buf);
+	INFO("input: %.*s", (int)count, buf);
 	if (count > 20)
 		return -EINVAL;
 	if ((n = sscanf(buf, "%s %d %d", op, &rid, &permission)) < 2)
@@ -291,7 +292,7 @@ int user_add_role(int uid, int rid)
 	u_role = kmalloc(sizeof(*u_role), GFP_KERNEL);
 	u_role->role = role;
 	list_add_tail(&u_role->list, u_role_list);
-	INFO("assigned user[%d] to role[%d]", uid, rid);
+	INFO("assigned user[%d] role[%d]", uid, rid);
 
 out_lock:
 	up_write(&sbrack_lock);
@@ -313,7 +314,7 @@ static ssize_t user_store(struct kobject *kobj, struct kobj_attribute *attr,
 	int n;
 	int err = 0;
 
-	INFO("%.*s", (int)count, buf);
+	INFO("input: %.*s", (int)count, buf);
 	if (count > 20)
 		return -EINVAL;
 	if ((n = sscanf(buf, "%s %d %d", op, &uid, &rid)) < 2 || uid < 0)

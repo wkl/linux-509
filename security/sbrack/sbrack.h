@@ -17,8 +17,8 @@
 
 #define UDBG printk(KERN_DEFAULT "DBG:%s:%s:%d\n", __FILE__, __func__, __LINE__)
 
-//#undef XDEBUG
-#define XDEBUG
+#undef XDEBUG
+// #define XDEBUG
 #ifdef XDEBUG
 #define INFO(fmt, ...) \
 	pr_info("[%s:%s:%d] " fmt "\n", __FILE__, __func__, __LINE__,\
