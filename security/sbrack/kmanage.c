@@ -1,13 +1,5 @@
 /*
- * role, user management
- *
- * Sample kobject implementation
- *
- * Copyright (C) 2004-2007 Greg Kroah-Hartman <greg@kroah.com>
- * Copyright (C) 2007 Novell Inc.
- *
- * Released under the GPL version 2 only.
- *
+ * role, user management with sysfs kobject
  */
 #include <linux/kobject.h>
 #include <linux/string.h>
@@ -18,8 +10,6 @@
 
 static int role;
 static int user;
-static int baz;
-static int bar;
 
 /* caller should make sure sbrack_lock is held */
 void dump_role_list(struct list_head *head, int global)
@@ -363,49 +353,12 @@ static struct kobj_attribute user_attribute =
 	__ATTR(user, 0666, user_show, user_store);
 
 /*
- * More complex function where we determine which variable is being accessed by
- * looking at the attribute for the "baz" and "bar" files.
- */
-static ssize_t b_show(struct kobject *kobj, struct kobj_attribute *attr,
-		      char *buf)
-{
-	int var;
-
-	if (strcmp(attr->attr.name, "baz") == 0)
-		var = baz;
-	else
-		var = bar;
-	return sprintf(buf, "%d\n", var);
-}
-
-static ssize_t b_store(struct kobject *kobj, struct kobj_attribute *attr,
-		       const char *buf, size_t count)
-{
-	int var;
-
-	sscanf(buf, "%du", &var);
-	if (strcmp(attr->attr.name, "baz") == 0)
-		baz = var;
-	else
-		bar = var;
-	return count;
-}
-
-static struct kobj_attribute baz_attribute =
-	__ATTR(baz, 0666, b_show, b_store);
-static struct kobj_attribute bar_attribute =
-	__ATTR(bar, 0666, b_show, b_store);
-
-
-/*
  * Create a group of attributes so that we can create and destroy them all
  * at once.
  */
 static struct attribute *attrs[] = {
 	&role_attribute.attr,
 	&user_attribute.attr,
-	&baz_attribute.attr,
-	&bar_attribute.attr,
 	NULL,	/* need to NULL terminate the list of attributes */
 };
 

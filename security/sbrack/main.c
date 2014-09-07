@@ -212,13 +212,12 @@ static int sbrack_inode_removexattr(struct dentry *dentry, const char *name)
 
 static int data_init(void)
 {
-	struct list_head *head;
-
 	init_rwsem(&sbrack_lock);
 	idr_init(&uid_map); 
 	INIT_LIST_HEAD(&role_list);
 
-	// TODO remove sample data
+	/* sample data, to be removed
+	struct list_head *head;
 	role_add_or_modify(1, NEED_ALL);
 	role_add_or_modify(2, NEED_READ);
 
@@ -231,6 +230,7 @@ static int data_init(void)
 	WARN_ON(!head);
 	dump_role_list(head, 0);
 	up_read(&sbrack_lock);
+	*/
 
 	return 0;
 }
