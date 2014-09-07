@@ -39,6 +39,7 @@
  * Group has execute permission.
  */
 
+#define NEED_ALL	S_IRWXG
 #define NEED_WRITE	S_IWGRP
 #define NEED_READ	S_IRGRP
 #define NEED_EXEC	S_IXGRP
@@ -46,26 +47,30 @@
 /* we will check access permisson of the users who belong to this gid only */
 #define SBRACK_GID	20000
 
-static DECLARE_RWSEM(sbrack_lock);	/* protect data structure */
 struct role {
 	int rid;
 	int permission;
 	struct list_head list;
 };
-static LIST_HEAD(role_list);
 
 /* each user's role list */ 
 struct u_role {
-	int rid;
 	struct role *role;
 	struct list_head list;
 };
 
-/* UID to its role list */
-static struct idr uid_map;
+extern struct rw_semaphore sbrack_lock;
+extern struct list_head role_list;
+extern struct idr uid_map;
 
-int api_init(void);
-void api_exit(void);
+extern int api_init(void);
+extern void api_exit(void);
+extern void dump_role_list(struct list_head *head, int global);
+extern int role_add_or_modify(int rid, int permission);
+extern void role_del_all(int cascade);
+extern int user_add(int uid);
+extern int user_add_role(int uid, int rid);
+extern void user_del_all(void);
 
 #endif	/* not _SBRACK_H_ */
 

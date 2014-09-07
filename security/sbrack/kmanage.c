@@ -1,4 +1,6 @@
 /*
+ * role, user management
+ *
  * Sample kobject implementation
  *
  * Copyright (C) 2004-2007 Greg Kroah-Hartman <greg@kroah.com>
@@ -12,37 +14,353 @@
 #include <linux/sysfs.h>
 #include <linux/module.h>
 #include <linux/init.h>
+#include "sbrack.h"
 
-/*
- * This module shows how to create a simple subdirectory in sysfs called
- * /sys/kernel/kobject-example  In that directory, 3 files are created:
- * "foo", "baz", and "bar".  If an integer is written to these files, it can be
- * later read out of it.
- */
-
-static int foo;
+static int role;
+static int user;
 static int baz;
 static int bar;
 
-/*
- * The "foo" file where a static variable is read from and written to.
- */
-static ssize_t foo_show(struct kobject *kobj, struct kobj_attribute *attr,
-			char *buf)
+/* caller should make sure sbrack_lock is held */
+void dump_role_list(struct list_head *head, int global)
 {
-	return sprintf(buf, "%d\n", foo);
+	struct role *role;
+	struct u_role *u_role;
+
+	if (!head) {
+		INFO("uninitialized role list");
+		return;
+	}
+	if (list_empty(head)) {
+		INFO("empty role list");
+		return;
+	}
+
+	if (global)
+		list_for_each_entry(role, head, list)
+			INFO("%d: %d", role->rid, role->permission);
+	else	// print user's role list
+		list_for_each_entry(u_role, head, list)
+			INFO("%d: %d", u_role->role->rid,
+			     u_role->role->permission);
 }
 
-static ssize_t foo_store(struct kobject *kobj, struct kobj_attribute *attr,
-			 const char *buf, size_t count)
+int role_add_or_modify(int rid, int permission)
 {
-	printk("%.*s\n", (int)count, buf);
-	sscanf(buf, "%du", &foo);
-	return count;
+	struct role *role;
+	int modified = 0;
+
+	down_write(&sbrack_lock);
+	list_for_each_entry(role, &role_list, list) {
+		if (role->rid == rid) {
+			role->permission = permission;
+			modified = 1;
+			break;
+		}
+	}
+	if (!modified) {
+		role = kmalloc(sizeof(*role), GFP_KERNEL);
+		role->rid = rid;
+		role->permission = permission;
+		list_add_tail(&role->list, &role_list);
+	}
+#ifdef XDEBUG
+	dump_role_list(&role_list, 1);
+#endif
+	up_write(&sbrack_lock);
+
+	return 0;
 }
 
-static struct kobj_attribute foo_attribute =
-	__ATTR(foo, 0666, foo_show, foo_store);
+/* caller should make sure sbrack_lock is held */
+static int __role_del_for_one_user(int uid, void *p, void *data)
+{
+	struct u_role *u_role, *next;
+	struct list_head *u_role_list = p;
+	int *rid = data;
+
+	list_for_each_entry_safe(u_role, next, u_role_list, list) {
+		if (u_role->role->rid == *rid) {
+			list_del(&u_role->list);
+			kfree(u_role);
+			INFO("user[%d]'s role[%d] revoked", uid, *rid);
+			break;
+		}
+	}
+#ifdef XDEBUG
+	dump_role_list(u_role_list, 0);
+#endif
+	return 0;
+}
+
+/* caller should make sure sbrack_lock is held */
+static void role_del_for_each_user(int rid)
+{
+	idr_for_each(&uid_map, __role_del_for_one_user, &rid);
+}
+
+/* delete all roles and corresponding entries in users' role lists.
+ * caller should make sure sbrack_lock is held.
+ * @cascade: if true, also delete role in user's role list; useful
+ * 	     (set to false) during module exit to avoid duplicate loop
+ * 	     by user_del_all(). */
+void role_del_all(int cascade)
+{
+	struct role *role, *next;
+
+	list_for_each_entry_safe(role, next, &role_list, list) {
+		list_del(&role->list);
+		if (cascade)
+			role_del_for_each_user(role->rid);
+		kfree(role);
+	}
+
+	WARN_ON(!list_empty(&role_list));
+}
+
+static int role_del_one(int rid)
+{
+	struct role *role, *next;
+	int err = -EINVAL;	/* not found */
+
+	down_write(&sbrack_lock);
+	list_for_each_entry_safe(role, next, &role_list, list) {
+		if (role->rid == rid) {
+			list_del(&role->list);
+			role_del_for_each_user(rid);
+			kfree(role);
+			err = 0;
+			break;
+		}
+	}
+#ifdef XDEBUG
+	dump_role_list(&role_list, 1);
+#endif
+	up_write(&sbrack_lock);
+
+	return err;
+}
+
+static ssize_t role_show(struct kobject *kobj, struct kobj_attribute *attr,
+			 char *buf)
+{
+	return sprintf(buf, "%d\n", role);
+}
+
+static ssize_t role_store(struct kobject *kobj, struct kobj_attribute *attr,
+			  const char *buf, size_t count)
+{
+	char op[20];
+	int rid, permission;
+	int n;
+	int err = 0;
+
+	INFO("%.*s", (int)count, buf);
+	if (count > 20)
+		return -EINVAL;
+	if ((n = sscanf(buf, "%s %d %d", op, &rid, &permission)) < 2)
+		return -EINVAL;
+
+	if (strcmp(op, "add") == 0) {
+		if (n != 3 || permission < 0)
+			return -EINVAL;
+		err = role_add_or_modify(rid, permission);
+	} else if (strcmp(op, "del") == 0) {
+		if (n != 2)
+			return -EINVAL;
+		err = role_del_one(rid);
+	} else {
+		err = -EINVAL;
+	}
+	INFO("processed %s %d; result: %d", op, rid, err);
+
+	if (!err)
+		err = count;
+
+	return err;
+}
+
+/* caller should make sure sbrack_lock is held */
+static int __user_del_one(int uid, void *p, void *unused)
+{
+	struct list_head *u_role_list = p;
+	struct u_role *u_role, *next;
+
+	/* remove its role list */
+	list_for_each_entry_safe(u_role, next, u_role_list, list) {
+		list_del(&u_role->list);
+		kfree(u_role);
+	}
+
+	kfree(u_role_list);
+	idr_remove(&uid_map, uid);
+	INFO("user[%d] deleted", uid);
+
+	return 0;
+}
+
+/* caller should make sure sbrack_lock is held */
+void user_del_all(void)
+{
+	idr_for_each(&uid_map, __user_del_one, NULL);
+}
+
+static int user_del_one(int uid)
+{
+	struct list_head *u_role_list;
+	int err = 0;
+
+	down_write(&sbrack_lock);
+	u_role_list = idr_find(&uid_map, uid);
+	if (u_role_list)
+		__user_del_one(uid, u_role_list, NULL);
+	else
+		err = -EINVAL;	/* user not found */
+	up_write(&sbrack_lock);
+
+	return err;
+}
+
+int user_add(int uid)
+{
+	struct list_head *u_role_list;
+	int err = 0;
+	int id;
+
+	down_write(&sbrack_lock);
+	u_role_list = idr_find(&uid_map, uid);
+	if (!u_role_list) {
+		u_role_list = kmalloc(sizeof(*u_role_list), GFP_KERNEL);
+		INIT_LIST_HEAD(u_role_list);
+		idr_preload(GFP_KERNEL);
+		id = idr_alloc(&uid_map, u_role_list, uid, uid + 1, GFP_KERNEL);
+		idr_preload_end();
+		WARN_ON(id != uid);
+		INFO("user[%d] created", id);
+	} else {
+		err = -EINVAL;	/* user with same uid already exists */
+	}
+	up_write(&sbrack_lock);
+
+	return err;
+}
+
+/* caller should make sure sbrack_lock is held and returned role should
+ * be used under the same lock for consistency. */
+static struct role * role_get_by_rid(int rid)
+{
+	struct role *role;
+	list_for_each_entry(role, &role_list, list) {
+		if (role->rid == rid)
+			return role;
+	}
+
+	return NULL;
+}
+
+static int user_del_role(int uid, int rid)
+{
+	struct list_head *u_role_list;
+	int err = 0;
+
+	down_write(&sbrack_lock);
+	u_role_list = idr_find(&uid_map, uid);
+	if (u_role_list)
+		err = __role_del_for_one_user(uid, u_role_list, &rid);
+	else
+		err = -EINVAL;	/* user not found */
+	up_write(&sbrack_lock);
+
+	return err;
+}
+
+int user_add_role(int uid, int rid)
+{
+	int err = 0;
+	struct role *role;
+	struct u_role *u_role;
+	struct list_head *u_role_list;
+
+	down_write(&sbrack_lock);
+	u_role_list = idr_find(&uid_map, uid);
+	if (!u_role_list) {
+		err = -EINVAL;	/* user not found */
+		goto out_lock;
+	}
+	role = role_get_by_rid(rid);
+	if (!role) {
+		err = -EINVAL;	/* role not found */
+		goto out_lock;
+	}
+
+	list_for_each_entry(u_role, u_role_list, list) {
+		if (u_role->role->rid == rid)
+			goto out_lock;	/* already assigned */
+	}
+
+	u_role = kmalloc(sizeof(*u_role), GFP_KERNEL);
+	u_role->role = role;
+	list_add_tail(&u_role->list, u_role_list);
+	INFO("assigned user[%d] to role[%d]", uid, rid);
+
+out_lock:
+	up_write(&sbrack_lock);
+
+	return err;
+}
+
+static ssize_t user_show(struct kobject *kobj, struct kobj_attribute *attr,
+			 char *buf)
+{
+	return sprintf(buf, "%d\n", user);
+}
+
+static ssize_t user_store(struct kobject *kobj, struct kobj_attribute *attr,
+			  const char *buf, size_t count)
+{
+	char op[20];
+	int uid, rid;
+	int n;
+	int err = 0;
+
+	INFO("%.*s", (int)count, buf);
+	if (count > 20)
+		return -EINVAL;
+	if ((n = sscanf(buf, "%s %d %d", op, &uid, &rid)) < 2 || uid < 0)
+		return -EINVAL;
+
+	if (strcmp(op, "add") == 0) {
+		if (n != 2)
+			return -EINVAL;
+		err = user_add(uid);
+	} else if (strcmp(op, "del") == 0) {
+		if (n != 2)
+			return -EINVAL;
+		err = user_del_one(uid);
+	} else if (strcmp(op, "add_role") == 0) {
+		if (n != 3 || rid < 0) {
+			return -EINVAL;
+		}
+		err = user_add_role(uid, rid);
+	} else if (strcmp(op, "del_role") == 0) {
+		if (n != 3 || rid < 0)
+			return -EINVAL;
+		err = user_del_role(uid, rid);
+	} else {
+		err = -EINVAL;
+	}
+	INFO("processed %s %d; result: %d", op, uid, err);
+
+	if (!err)
+		err = count;
+
+	return err;
+}
+
+static struct kobj_attribute role_attribute =
+	__ATTR(role, 0666, role_show, role_store);
+static struct kobj_attribute user_attribute =
+	__ATTR(user, 0666, user_show, user_store);
 
 /*
  * More complex function where we determine which variable is being accessed by
@@ -84,7 +402,8 @@ static struct kobj_attribute bar_attribute =
  * at once.
  */
 static struct attribute *attrs[] = {
-	&foo_attribute.attr,
+	&role_attribute.attr,
+	&user_attribute.attr,
 	&baz_attribute.attr,
 	&bar_attribute.attr,
 	NULL,	/* need to NULL terminate the list of attributes */
@@ -107,7 +426,7 @@ int api_init(void)
 	int retval;
 
 	/*
-	 * Create a simple kobject with the name of "kobject_example",
+	 * Create a simple kobject with the name of "sbrack",
 	 * located under /sys/kernel/
 	 *
 	 * As this is a simple directory, no uevent will be sent to

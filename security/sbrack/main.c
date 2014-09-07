@@ -1,5 +1,14 @@
 #include "sbrack.h"
 
+/* UID to its role list */
+struct idr uid_map;
+
+/* protect data structure */
+struct rw_semaphore sbrack_lock;
+
+/* global role list */
+struct list_head role_list;
+
 /* ASSUMPTION:
  * SBRACK only checks permission for the users who belong to
  * STONYBROOK group (SBRACK_GID).
@@ -201,86 +210,42 @@ static int sbrack_inode_removexattr(struct dentry *dentry, const char *name)
 	void (*inode_getsecid) (const struct inode *inode, u32 *secid);
 */
 
-static void dump_role_list(struct list_head *head, int global)
-{
-	struct role *role;
-	struct u_role *u_role;
-
-	if (!head) {
-		INFO("uninitialized role list");
-		return;
-	}
-
-	if (global)
-		list_for_each_entry(role, head, list)
-			INFO("%d: %d", role->rid, role->permission);
-	else	// print user's role list
-		list_for_each_entry(u_role, head, list)
-			INFO("%d: %d", u_role->rid, u_role->role->permission);
-}
-
 static int data_init(void)
 {
-	struct role *role;
-	struct u_role *u_role;
 	struct list_head *head;
-	struct list_head *u_role_head;
-	int uid;
 
-	WARN_ON(!list_empty(&role_list));
+	init_rwsem(&sbrack_lock);
 	idr_init(&uid_map); 
+	INIT_LIST_HEAD(&role_list);
 
-	role = kmalloc(sizeof(*role), GFP_KERNEL);
-	role->rid = 1;
-	role->permission = S_IRWXG;
-	list_add_tail(&role->list, &role_list);
+	// TODO remove sample data
+	role_add_or_modify(1, NEED_ALL);
+	role_add_or_modify(2, NEED_READ);
 
-	role = kmalloc(sizeof(*role), GFP_KERNEL);
-	role->rid = 2;
-	role->permission = S_IRGRP;
-	list_add_tail(&role->list, &role_list);
-	dump_role_list(&role_list, 1);
-
-	u_role = kmalloc(sizeof(*role), GFP_KERNEL);
-	u_role->rid = 1;
-	u_role->role = role;
-	u_role_head = kmalloc(sizeof(*u_role_head), GFP_KERNEL);
-	INIT_LIST_HEAD(u_role_head);
-	list_add_tail(&u_role->list, u_role_head);
-
-	idr_preload(GFP_KERNEL);
-	down_write(&sbrack_lock);
-	uid = idr_alloc(&uid_map, u_role_head, 1001, 1002, GFP_KERNEL);
-	up_write(&sbrack_lock);
-	idr_preload_end();
-	INFO("uid: %d", uid);
-	WARN_ON(uid != 1001);
+	user_add(1001);
+	user_add_role(1001, 2);
+	user_add_role(1001, 1);
 
 	down_read(&sbrack_lock);
 	head = idr_find(&uid_map, 1001);
-	up_read(&sbrack_lock);
 	WARN_ON(!head);
 	dump_role_list(head, 0);
+	up_read(&sbrack_lock);
 
 	return 0;
 }
 
 static void data_exit(void)
 {
-	struct role *role, *next;
-
 	down_write(&sbrack_lock);
+	role_del_all(0);
+	user_del_all();
 	idr_destroy(&uid_map);
-	// TODO remove user's role list
-	list_for_each_entry_safe(role, next, &role_list, list) {
-		list_del(&role->list);
-	}
-	WARN_ON(!list_empty(&role_list));
 	up_write(&sbrack_lock);
 }
 
 static struct security_operations sbrack_ops = {
-	.name =			"sbrack",
+	.name			=	"sbrack",
 
 	.inode_create		=	sbrack_inode_create,
 	.inode_link		=	sbrack_inode_link,
