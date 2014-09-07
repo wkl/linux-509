@@ -4,8 +4,9 @@
 
 import pickle
 import getopt
-import pwd
+import pwd, grp
 import os
+import sys
 
 R = CAN_READ = 00040
 W = CAN_WRITE = 00020
@@ -26,40 +27,82 @@ class User:
 
 #import pdb; pdb.set_trace()
 class SBrack:
-    def __init__(self):
-        self.users = {}
-        self.role = {}
+    DB_PATH = "sbrack.db"
+    SBRACK_GROUP = 'stonybrook'
 
-    def dump(self, db="sbrack.db"):
-        pass
+    def __init__(self):
+        self.data = {}
+        self.data['users'] = {}
+        self.data['roles'] = {}
+        self.data['next_rid'] = 1
+        try:
+            if os.stat(self.DB_PATH).st_size > 0:
+                with open(self.DB_PATH, "rb") as f:
+                    self.data = pickle.load(f)
+        except:
+            pass
+
+    def __del__(self):
+        self.dump()
+
+    @property
+    def users(self):
+        return self.data['users']
+
+    @property
+    def roles(self):
+        return self.data['roles']
+
+    def dump(self):
+        with open(self.DB_PATH, "wb") as f:
+            pickle.dump(self.data, f)
 
     def user_in_sb_group(self, name):
-        for grp in grp.getgrall():
-            if grp.gr_name == 'stonybrook':
-                return name in grp.gr_mem
+        for g in grp.getgrall():
+            if g.gr_name == self.SBRACK_GROUP:
+                return name in g.gr_mem
+
+    def validate_user(self, name, should_exist=True):
+        try:
+            pwd_u = pwd.getpwnam(name)
+        except:
+            raise Exception("not exist on Linux")
+
+        if not self.user_in_sb_group(name):
+            raise Exception("not in '%s' group" % self.SBRACK_GROUP)
+
+        if not should_exist and self.users.has_key(name):
+            raise Exception("already exist in SBRACK")
+        elif should_exist and not self.users.has_key(name):
+            raise Exception("not exist in SBRACK")
+
+        return pwd_u
 
     def add_user(self, name):
         try:
-            u = pwd.getpwnam(name)
-            if self.users.has_key(name):
-                raise
-            user = User(name, u.pw_uid)
-            if Kernel.add_user(user):
-                self.users[name] = user
-            else:
-                raise
-        except:
-            print "User not found on Linux or already exist in SBRACK"
+            pwd_u = self.validate_user(name, should_exist=False)
+            user = User(name, pwd_u.pw_uid)
+            Kernel.add_user(user)
+            self.users[name] = user
+        except Exception as ex:
+            print "user[%s]: %s" % (name, ex.message)
 
     def del_user(self, name):
         try:
-            pwd.getpwnam(name)
-            if Kernel.del_user(self.users[name]):
-                self.users.pop(name)
-            else:
-                raise
-        except:
-            print "User not found on Linux or not exist in SBRACK"
+            self.validate_user(name, should_exist=True)
+            Kernel.del_user(self.users[name])
+            self.users.pop(name)
+        except Exception as ex:
+            print "user[%s]: %s" % (name, ex.message)
+
+    def add_role(self, name):
+        try:
+            pwd_u = self.validate_user(name, should_exist=False)
+            user = User(name, pwd_u.pw_uid)
+            Kernel.add_user(user)
+            self.users[name] = user
+        except Exception as ex:
+            print "user[%s]: %s" % (name, ex.message)
 
 class Kernel:
     SYSFS_USER_PATH = "/sys/kernel/sbrack/user"
@@ -82,15 +125,36 @@ class Kernel:
         fd = os.open(where, os.O_WRONLY)
         if os.write(fd, cmd) < 0:
             os.close(fd)
-            return False
+            raise Exception("failed to commit to kernel")
         os.close(fd)
-        return True
+
+def usage():
+    print "Usage:"
+    print "\tadd_user name"
+    print "\tdel_user name"
+    sys.exit()
 
 def main():
-    # TODO check stonybrook group
+    # TODO check stonybrook group; check sudo
+
+    if len(sys.argv) < 2:
+        usage()
+    op = sys.argv[1]
+
     sb = SBrack()
-    sb.add_user('david')
-    sb.del_user('david')
+
+    if op == "add_user":
+        if len(sys.argv) != 3:
+            usage()
+        sb.add_user(sys.argv[2])
+    elif op == "del_user":
+        if len(sys.argv) != 3:
+            usage()
+        sb.del_user(sys.argv[2])
+    else:
+        usage()
+
+    sb.dump()
 
 if __name__ == '__main__':
     main()
