@@ -126,6 +126,15 @@ class SBrack:
         except Exception as ex:
             print "role[%s]: %s" % (name, ex.message)
 
+    def edit_role(self, name, perm):
+        try:
+            self.validate_role(name, should_exist=True)
+            role = self.roles[name]
+            role.permission = self.build_perm(perm)
+            Kernel.add_role(role)
+        except Exception as ex:
+            print "role[%s]: %s" % (name, ex.message)
+
     def del_role(self, name):
         try:
             self.validate_role(name, should_exist=True)
@@ -242,6 +251,7 @@ def usage():
     print "Usage:"
     print "\tadd_role name RWX\t(example: R, RW, NONE)"
     print "\tdel_role name"
+    print "\tedit_role name R"
     print "\tlist_role"
     print "\t-------------"
     print "\tadd_user name"
@@ -281,6 +291,10 @@ def main():
         if len(sys.argv) != 4:
             usage()
         sb.add_role(sys.argv[2], sys.argv[3])
+    elif op == "edit_role":
+        if len(sys.argv) != 4:
+            usage()
+        sb.edit_role(sys.argv[2], sys.argv[3])
     elif op == "del_role":
         if len(sys.argv) != 3:
             usage()
